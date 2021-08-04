@@ -6,5 +6,3 @@ RUN pip install --upgrade pip && \
 
 ADD ./code /app
 WORKDIR /app
-
-CMD ["python", "src/main.py"]
