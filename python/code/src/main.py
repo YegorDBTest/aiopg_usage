@@ -19,6 +19,8 @@ async def get_data(cur):
     async for row in cur:
         ret.append(row)
     logging.warning(ret)
+    await cur.execute('UPDATE test SET done = true WHERE done = false;')
+    logging.warning(cur.rowcount)
 
 
 async def go():
