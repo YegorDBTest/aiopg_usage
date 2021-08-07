@@ -13,8 +13,8 @@ CONNECTION_DATA = {
 dsn = ' '.join(map(lambda i: f'{i[0]}={i[1]}', CONNECTION_DATA.items()))
 
 
-async def handle_message(cur, id):
-    logging.warning(f'Get mesage with id = {id}')
+async def handle_message(cur, id, i):
+    logging.warning(f'{i} Get mesage with id = {id}')
     await cur.execute(
         f'''
         UPDATE test_message
@@ -23,7 +23,7 @@ async def handle_message(cur, id):
         '''
     )
     if cur.rowcount > 0:
-        logging.warning(f'Sending mesage with id = {id}')
+        logging.warning(f'{i} Sending mesage with id = {id}')
         await asyncio.sleep(30)
         await cur.execute(
             f'''
@@ -34,7 +34,7 @@ async def handle_message(cur, id):
         )
 
 
-async def get_data(cur):
+async def get_data(cur, i):
     await cur.execute(
         '''
         SELECT id, done, sending
@@ -42,24 +42,26 @@ async def get_data(cur):
         WHERE done = false AND sending = false;
         '''
     )
-    logging.warning(f'cur.rowcount {cur.rowcount}')
+    logging.warning(f'{i} cur.rowcount {cur.rowcount}')
     if cur.rowcount == 0:
         return
     data = await cur.fetchall()
     for id, done, sending in data:
-        await handle_message(cur, id)
+        await handle_message(cur, id, i)
 
 
-async def go(timeout):
-    await asyncio.sleep(timeout)
+async def go(i):
+    await asyncio.sleep(i / 5)
     async with aiopg.create_pool(dsn) as pool:
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
-                await get_data(cur)
+                while True:
+                    await get_data(cur, i)
+                    await asyncio.sleep(1)
 
 
 async def main():
-    await asyncio.gather(*(go(i) for i in range(100)))
+    await asyncio.gather(*(go(i) for i in range(5)))
 
 
 if __name__ == '__main__':
