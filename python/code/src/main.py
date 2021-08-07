@@ -4,6 +4,7 @@ import logging
 import os
 
 
+THREADS_COUNT = 5
 CONNECTION_DATA = {
     'dbname': os.environ.get('POSTGRES_DB'),
     'user': os.environ.get('POSTGRES_USER'),
@@ -39,19 +40,20 @@ async def get_data(cur, i):
         '''
         SELECT id, done, sending
         FROM test_message
-        WHERE done = false AND sending = false;
+        WHERE done = false AND sending = false
+        ORDER BY id ASC
+        LIMIT 1;
         '''
     )
     logging.warning(f'{i} cur.rowcount {cur.rowcount}')
     if cur.rowcount == 0:
         return
-    data = await cur.fetchall()
-    for id, done, sending in data:
-        await handle_message(cur, id, i)
+    id, done, sending = await cur.fetchone()
+    await handle_message(cur, id, i)
 
 
 async def go(i):
-    await asyncio.sleep(i / 5)
+    await asyncio.sleep(i / THREADS_COUNT)
     async with aiopg.create_pool(dsn) as pool:
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
@@ -61,7 +63,7 @@ async def go(i):
 
 
 async def main():
-    await asyncio.gather(*(go(i) for i in range(5)))
+    await asyncio.gather(*(go(i) for i in range(THREADS_COUNT)))
 
 
 if __name__ == '__main__':
