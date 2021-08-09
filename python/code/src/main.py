@@ -3,24 +3,104 @@ import aiopg
 import logging
 import os
 
+from functools import wraps
+
+
+CONNECTION_DATA = {
+    'dbname': os.environ.get('POSTGRES_DB'),
+    'user': os.environ.get('POSTGRES_USER'),
+    'password': os.environ.get('POSTGRES_PASSWORD'),
+    'host': 'postgres',
+}
+DSN = ' '.join((f'{k}={v}' for k, v in CONNECTION_DATA.items()))
+
+
+def with_cursor(method):
+    @wraps(method)
+    async def wrapper(self, *args, **kwargs):
+        async with aiopg.create_pool(DSN) as pool:
+            async with pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    self._cur = cur
+                    await method(self, *args, **kwargs)
+    return wrapper
+
 
 class MessageHandler:
+
+    def __init__(self, id, message_id):
+        self._id = id
+        self._message_id = message_id
+        self._cur = None
+
+    @with_cursor
+    async def start(self):
+        await self._reserve_message()
+        if self._cur.rowcount == 0:
+            return
+        await self._send_message()
+        await self._complete_message()
+
+    async def _reserve_message(self):
+        logging.warning(f'SENDER {self._id} Reserve mesage with id = {self._message_id}')
+        await self._cur.execute(
+            f'''
+            UPDATE test_message
+            SET sending = true
+            WHERE id = {self._message_id};
+            '''
+        )
+
+    async def _send_message(self):
+        logging.warning(f'SENDER {self._id} Sending mesage with id = {self._message_id}')
+        await asyncio.sleep(30)
+
+    async def _complete_message(self):
+        logging.warning(f'SENDER {self._id} Complete mesage with id = {self._message_id}')
+        await self._cur.execute(
+            f'''
+            DELETE
+            FROM test_message
+            WHERE id = {self._message_id};
+            '''
+        )
+
+
+class MessagesHandler:
+
+    def __init__(self, app, id):
+        self._app = app
+        self._id = id
+        self._cur = None
+
+    async def start(self):
+        while True:
+            await self._handle()
+            await asyncio.sleep(1)
+
+    async def _handle(self):
+        if not self._app.data:
+            return
+        handlers = (
+            MessageHandler(self._id, id).start()
+            for id, done, sending in self._app.data
+        )
+        self._app.data = None
+        await asyncio.gather(*handlers)
+
+
+class MessagesGetter:
 
     def __init__(self, app):
         self._app = app
         self._cur = None
 
+    @with_cursor
     async def start(self):
-        async with aiopg.create_pool(self._app.dsn) as pool:
-            async with pool.acquire() as conn:
-                async with conn.cursor() as cur:
-                    self._cur = cur
-                    while True:
-                        await self._handle()
-                        await asyncio.sleep(1)
+        while True:
+            await self._handle()
+            await asyncio.sleep(1)
 
-
-class MessageGetHandler(MessageHandler):
     async def _handle(self):
         await self._cur.execute(
             '''
@@ -32,79 +112,21 @@ class MessageGetHandler(MessageHandler):
         logging.warning(f'GETTER rowcount {self._cur.rowcount}')
         if self._cur.rowcount == 0:
             return
-        for id, done, sending in await self._cur.fetchall():
-            self._app.data[id] = {
-                'done': done,
-                'sending': sending,
-            }
-
-
-class MessageSendHandler(MessageHandler):
-
-    def __init__(self, app, id):
-        super().__init__(app)
-        self._id = id
-
-    async def start(self):
-        await asyncio.sleep(self._id / self._app.threads_count)
-        await super().start()
-
-    async def _handle(self):
-        if not self._app.data:
-            return
-        id, values = self._app.data.popitem()
-        await self._reserve_message(id)
-        if self._cur.rowcount == 0:
-            return
-        await self._send_message(id)
-        await self._complete_message(id)
-
-    async def _reserve_message(self, id):
-        logging.warning(f'SENDER {self._id} Reserve mesage with id = {id}')
-        await self._cur.execute(
-            f'''
-            UPDATE test_message
-            SET sending = true
-            WHERE id = {id};
-            '''
-        )
-
-    async def _send_message(self, id):
-        logging.warning(f'SENDER {self._id} Sending mesage with id = {id}')
-        await asyncio.sleep(30)
-
-    async def _complete_message(self, id):
-        logging.warning(f'SENDER {self._id} Complete mesage with id = {id}')
-        await self._cur.execute(
-            f'''
-            DELETE
-            FROM test_message
-            WHERE id = {id};
-            '''
-        )
+        self._app.data = await self._cur.fetchall()
 
 
 class App:
 
-    def __init__(self, connection_data, threads_count=5):
-        self.dsn = ' '.join((f'{k}={v}' for k, v in connection_data.items()))
-        self.threads_count = threads_count
-        self.data = {}
+    def __init__(self, handlers_count=5):
+        self._handlers_count = handlers_count
+        self.data = None
 
     async def main(self):
         await asyncio.gather(
-            MessageGetHandler(self).start(),
-            *(
-                MessageSendHandler(self, i).start()
-                for i in range(self.threads_count
-            ))
+            MessagesGetter(self).start(),
+            *(MessagesHandler(self, i).start() for i in range(self._handlers_count)),
         )
 
 
 if __name__ == '__main__':
-    asyncio.run(App({
-        'dbname': os.environ.get('POSTGRES_DB'),
-        'user': os.environ.get('POSTGRES_USER'),
-        'password': os.environ.get('POSTGRES_PASSWORD'),
-        'host': 'postgres',
-    }).main())
+    asyncio.run(App().main())
