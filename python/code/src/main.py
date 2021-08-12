@@ -1,5 +1,6 @@
-import asyncio
+import aiohttp
 import aiopg
+import asyncio
 import logging
 import os
 
@@ -37,12 +38,17 @@ class MessageHandler:
     @with_cursor
     async def start(self):
         await self._send_message()
-        await self._complete_message()
 
     async def _send_message(self):
+        url = f'http://0.0.0.0:8000/send_message/{self._message_id}/'
         logging.warning(f'SENDER {self._id} Sending mesage with id = {self._message_id}')
-        await asyncio.sleep(30)
-        logging.warning(f'SENDER {self._id} Send mesage with id = {self._message_id}')
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                logging.warning(
+                    f'SENDER {self._id} Response status'
+                    f'mesage with id = {self._message_id} is {resp.status}')
+                if resp.status == 200:
+                    await self._complete_message()
 
     async def _complete_message(self):
         logging.warning(f'SENDER {self._id} Completing mesage with id = {self._message_id}')
