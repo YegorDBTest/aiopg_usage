@@ -112,3 +112,13 @@ STATIC_URL = '/static/'
 # https://docs.djangoproject.com/en/3.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+CONNECTION_DATA = {
+    'dbname': os.environ.get('POSTGRES_DB'),
+    'user': os.environ.get('POSTGRES_USER'),
+    'password': os.environ.get('POSTGRES_PASSWORD'),
+    'host': 'postgres',
+}
+DSN = ' '.join((f'{k}={v}' for k, v in CONNECTION_DATA.items()))
+MESSAGE_HANDLERS_COUNT = 5

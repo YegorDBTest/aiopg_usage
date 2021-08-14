@@ -1,6 +1,6 @@
 #!/bin/bash
 
-(python src/main.py) &
+(python src/manage.py messages_handle_app) &
 
 # while true; do
 # 	sleep 60

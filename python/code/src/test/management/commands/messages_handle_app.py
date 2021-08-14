@@ -2,24 +2,17 @@ import aiohttp
 import aiopg
 import asyncio
 import logging
-import os
 
 from functools import wraps
 
-
-CONNECTION_DATA = {
-    'dbname': os.environ.get('POSTGRES_DB'),
-    'user': os.environ.get('POSTGRES_USER'),
-    'password': os.environ.get('POSTGRES_PASSWORD'),
-    'host': 'postgres',
-}
-DSN = ' '.join((f'{k}={v}' for k, v in CONNECTION_DATA.items()))
+from django.conf import settings
+from django.core.management.base import BaseCommand
 
 
 def with_cursor(method):
     @wraps(method)
     async def wrapper(self, *args, **kwargs):
-        async with aiopg.create_pool(DSN) as pool:
+        async with aiopg.create_pool(settings.DSN) as pool:
             async with pool.acquire() as conn:
                 async with conn.cursor() as cur:
                     self._cur = cur
@@ -120,8 +113,8 @@ class MessagesGetter:
 
 class App:
 
-    def __init__(self, handlers_count=5):
-        self._handlers_count = handlers_count
+    def __init__(self, handlers_count=None):
+        self._handlers_count = handlers_count or settings.MESSAGE_HANDLERS_COUNT
         self.data = None
         self.fetching = False
         self.processing_ids = set()
@@ -140,5 +133,7 @@ class App:
         self.processing_ids -= {id}
 
 
-if __name__ == '__main__':
-    asyncio.run(App().main())
+class Command(BaseCommand):
+
+    def handle(self, *args, **options):
+        asyncio.run(App().main())
