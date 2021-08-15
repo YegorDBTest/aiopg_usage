@@ -2,11 +2,15 @@ import aiohttp
 import aiopg
 import asyncio
 import logging
+import traceback
 
 from functools import wraps
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
+
+
+logger = logging.getLogger('django.server')
 
 
 def with_cursor(method):
@@ -34,17 +38,17 @@ class MessageHandler:
 
     async def _send_message(self):
         url = f'http://0.0.0.0:8000/send_message/{self._message_id}/'
-        logging.warning(f'SENDER {self._id} Sending mesage with id = {self._message_id}')
+        logger.info(f'SENDER {self._id} Sending mesage with id = {self._message_id}')
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
-                logging.warning(
+                logger.info(
                     f'SENDER {self._id} Response status'
                     f'mesage with id = {self._message_id} is {resp.status}')
                 if resp.status == 200:
                     await self._complete_message()
 
     async def _complete_message(self):
-        logging.warning(f'SENDER {self._id} Completing mesage with id = {self._message_id}')
+        logger.info(f'SENDER {self._id} Completing mesage with id = {self._message_id}')
         await self._cur.execute(
             f'''
             DELETE
@@ -53,7 +57,7 @@ class MessageHandler:
             '''
         )
         self._app.done_message(self._message_id)
-        logging.warning(f'SENDER {self._id} Complete mesage with id = {self._message_id}')
+        logger.info(f'SENDER {self._id} Complete mesage with id = {self._message_id}')
 
 
 class MessagesHandler:
@@ -65,13 +69,16 @@ class MessagesHandler:
 
     async def start(self):
         while True:
-            await self._handle()
+            try:
+                await self._handle()
+            except Exception as err:
+                logger.error(f'\n{traceback.format_exc()}')
             await asyncio.sleep(1)
 
     async def _handle(self):
         if not self._app.data:
             return
-        logging.warning(f'HANDLER {self._id} Handle {self._app.data}')
+        logger.info(f'HANDLER {self._id} Handle {self._app.data}')
         handlers = (
             MessageHandler(self._app, self._id, d[0]).start()
             for d in self._app.data
@@ -89,11 +96,18 @@ class MessagesGetter:
     @with_cursor
     async def start(self):
         while True:
-            await self._handle()
+            try:
+                await self._handle()
+            except Exception as err:
+                logger.error(f'\n{traceback.format_exc()}')
             await asyncio.sleep(1)
 
     async def _handle(self):
-        logging.warning(f'data {self._app.data}, fetching {self._app.fetching}, processing_ids {self._app.processing_ids}')
+        logger.info(
+            'GETTER '
+            f'data {self._app.data}, '
+            f'fetching {self._app.fetching}, '
+            f'processing_ids {self._app.processing_ids}')
         if self._app.fetching or self._app.data:
             return
         await self._cur.execute(
@@ -103,7 +117,7 @@ class MessagesGetter:
             WHERE NOT (id = ANY ('{self._app.processing_ids or '{}'}'));
             """
         )
-        logging.warning(f'GETTER rowcount {self._cur.rowcount}')
+        logger.info(f'GETTER rowcount {self._cur.rowcount}')
         if self._cur.rowcount == 0:
             return
         self._app.fetching = True
@@ -136,4 +150,7 @@ class App:
 class Command(BaseCommand):
 
     def handle(self, *args, **options):
-        asyncio.run(App().main())
+        try:
+            asyncio.run(App().main())
+        except Exception as err:
+            logger.error(f'\n{traceback.format_exc()}')
